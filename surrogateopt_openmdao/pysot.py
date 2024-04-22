@@ -23,7 +23,7 @@ CITATIONS = """
 """
 
 
-class PySOTOptimizer(Driver):
+class PySOTDriver(Driver):
     """
     Driver wrapper for the scipy.optimize.minimize family of local optimizers.
 

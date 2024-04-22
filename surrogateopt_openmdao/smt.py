@@ -3,19 +3,12 @@ from pySOT import *
 import numpy as np
 
 from openmdao.core.driver import Driver
-from collections import OrderedDict
 
 import sys
-from packaging.version import Version
 
 import numpy as np
-from scipy import __version__ as scipy_version
-from scipy.optimize import minimize
 
-from openmdao.core.constants import INF_BOUND
 from openmdao.core.driver import Driver, RecordingDebugging
-from openmdao.utils.class_util import WeakMethodWrapper
-from openmdao.utils.mpi import MPI
 
 from smt.applications import EGO
 from smt.surrogate_models import KRG
@@ -23,61 +16,27 @@ from smt.utils.design_space import DesignSpace
 
 
 
-CITATIONS = """
-...
-"""
-
-
-class SMTOptimizer(Driver):
+class SMTDriver(Driver):
     """
-    Driver wrapper for the scipy.optimize.minimize family of local optimizers.
+    Driver wrapper for the SMT-based global optimizer.
 
-    Inequality constraints are supported by COBYLA and SLSQP,
-    but equality constraints are only supported by SLSQP. None of the other
-    optimizers support constraints.
+    The EGO optimizer is a Bayesian optimizer that uses a Gaussian process surrogate model to
+    approximate the objective function. The optimizer is based on the Efficient Global Optimization
+    (EGO) algorithm.
 
-    ScipyOptimizeDriver supports the following:
-        equality_constraints
-        inequality_constraints
+    References
+    ----------
+    https://smt.readthedocs.io/en/stable/_src_docs/applications/ego.html
 
     Parameters
     ----------
     **kwargs : dict of keyword arguments
         Keyword arguments that will be mapped into the Driver options.
-
-    Attributes
-    ----------
-    fail : bool
-        Flag that indicates failure of most recent optimization.
-    iter_count : int
-        Counter for function evaluations.
-    result : OptimizeResult
-        Result returned from scipy.optimize call.
-    opt_settings : dict
-        Dictionary of solver-specific options. See the scipy.optimize.minimize documentation.
-    _check_jac : bool
-        Used internally to control when to perform singular checks on computed total derivs.
-    _con_cache : dict
-        Cached result of constraint evaluations because scipy asks for them in a separate function.
-    _con_idx : dict
-        Used for constraint bookkeeping in the presence of 2-sided constraints.
-    _grad_cache : {}
-        Cached result of nonlinear constraint derivatives because scipy asks for them in a separate
-        function.
-    _exc_info : 3 item tuple
-        Storage for exception and traceback information.
-    _obj_and_nlcons : list
-        List of objective + nonlinear constraints. Used to compute total derivatives
-        for all except linear constraints.
-    _dvlist : list
-        Copy of _designvars.
-    _lincongrad_cache : np.ndarray
-        Pre-calculated gradients of linear constraints.
     """
 
     def __init__(self, **kwargs):
         """
-        Initialize the ScipyOptimizeDriver.
+        Initialize the SMT optimization driver.
         """
         super().__init__(**kwargs)
 
@@ -112,31 +71,26 @@ class SMTOptimizer(Driver):
         self._exc_info = None
         self._total_jac_format = "array"
 
-        self.cite = CITATIONS
 
     def _declare_options(self):
         """
         Declare options before kwargs are processed in the init method.
         """
-        self.options.declare("optimizer", "EI")
-        # self.options.declare('tol', 1.0e-6, lower=0.0,
-        #                      desc='Tolerance for termination. For detailed '
-        #                      'control, use solver-specific options.')
-        self.options.declare('maxiter', 200, lower=0,
-                             desc='Maximum number of iterations.')
-        self.options.declare("n_init", None, lower=0, types=int, desc="Number of points for initial DOE.")
-        self.options.declare('disp', False, types=bool,
-                             desc='Print optimization info.')
-        self.options.declare("random_state", None, types=int, allow_none=True,)
-        # self.options.declare('singular_jac_behavior', default='warn',
-        #                      values=['error', 'warn', 'ignore'],
-        #                      desc='Defines behavior of a zero row/col check after first call to'
-        #                      'compute_totals:'
-        #                      'error - raise an error.'
-        #                      'warn - raise a warning.'
-        #                      "ignore - don't perform check.")
-        # self.options.declare('singular_jac_tol', default=1e-16,
-        #                      desc='Tolerance for zero row/column check.')
+        self.options.declare("optimizer", "EGO", desc="SMT optimization.")
+        self.options.declare("criterion", "EI", desc="EGO criterion.")
+        self.options.declare(
+            "maxiter", 200, lower=0, desc="Maximum number of iterations."
+        )
+        self.options.declare(
+            "n_init", None, lower=0, types=int, desc="Number of points for initial DOE."
+        )
+        self.options.declare("disp", False, types=bool, desc="Print optimization info.")
+        self.options.declare(
+            "random_state",
+            None,
+            types=int,
+            allow_none=True,
+        )
 
     def _get_name(self):
         """
@@ -147,7 +101,7 @@ class SMTOptimizer(Driver):
         str
             The name of the current optimizer.
         """
-        return "SMT_" + self.options["optimizer"]
+        return "SMT_" + self.options["optimizer"] + "_" + self.options["criterion"]
 
     def _setup_driver(self, problem):
         """
@@ -199,10 +153,7 @@ class SMTOptimizer(Driver):
         int
             Number of objective evaluations made during a driver run.
         """
-        if self.result and hasattr(self.result, "nfev"):
-            return self.result.nfev
-        else:
-            return None
+        return self.iter_count
 
     def get_driver_derivative_calls(self):
         """
@@ -213,10 +164,7 @@ class SMTOptimizer(Driver):
         int
             Number of derivative evaluations made during a driver run.
         """
-        if self.result and hasattr(self.result, "njev"):
-            return self.result.njev
-        else:
-            return None
+        return 0
 
     def run(self):
         """
@@ -228,7 +176,8 @@ class SMTOptimizer(Driver):
             Failure flag; True if failed to converge, False is successful.
         """
         problem = self._problem()
-        criterion = self.options["optimizer"]
+        optimizer = self.options["optimizer"]
+        criterion = self.options["criterion"]
         model = problem.model
         self.iter_count = 0
         self._total_jac = None
@@ -236,10 +185,7 @@ class SMTOptimizer(Driver):
         self._check_for_missing_objective()
         self._check_for_invalid_desvar_values()
 
-        # Initial Run
-        with RecordingDebugging(self._get_name(), self.iter_count, self) as rec:
-            model.run_solve_nonlinear()
-            self.iter_count += 1
+
 
         self._con_cache = self.get_constraint_values()
         desvar_vals = self.get_design_var_values()
@@ -294,7 +240,7 @@ class SMTOptimizer(Driver):
             y = np.zeros(n)
 
             for i in range(n):
-                y[i] = self._objfunc(x[i,:])
+                y[i] = self._objfunc(x[i, :])
             return y
 
         xlimits = np.array([lb, ub]).T
@@ -309,23 +255,26 @@ class SMTOptimizer(Driver):
         random_state = self.options["random_state"]
         design_space = DesignSpace(xlimits, random_state=random_state)
 
-        ego = EGO(
-            n_iter=n_iter,
-            criterion=criterion,
-            #n_start=n_init,
-            n_doe=n_init,
-            surrogate=KRG(design_space=design_space, print_global=self.options["disp"]),
-            random_state=random_state,
-        )
+        if optimizer == "EGO":
+            ego = EGO(
+                n_iter=n_iter,
+                criterion=criterion,
+                n_doe=n_init,
+                surrogate=KRG(
+                    design_space=design_space, print_global=self.options["disp"]
+                ),
+                random_state=random_state,
+            )
+        else:
+            raise ValueError(f"Optimizer {optimizer} not supported!")
 
         x_opt, y_opt, _, x_data, y_data = ego.optimize(fun=obj)
 
-        import proplot as pplt 
-        import matplotlib.pyplot as plt
-        
+        # import proplot as pplt
+        # import matplotlib.pyplot as plt
 
-        x_plot = np.atleast_2d(np.linspace(lb[0], ub[0], 100)).T
-        y_plot = obj(x_plot)
+        # x_plot = np.atleast_2d(np.linspace(lb[0], ub[0], 100)).T
+        # y_plot = obj(x_plot)
 
         # fig = plt.figure(figsize=[10, 10])
         # for i in range(n_iter):
@@ -374,11 +323,15 @@ class SMTOptimizer(Driver):
         #     )
         # plt.show()
 
-        id_min = np.argmin(y_opt)
-        x_opt = x_opt[id_min]
-        y_opt = y_opt[id_min]
+    
+        # Re-run the model with the optimal design point, s.t. the last point 
+        # is the optimal one
+        # TODO: remove this
+        obj(np.array([x_opt]))
 
         self.result = y_opt
+
+        return False
 
     def _objfunc(self, x_new):
         """
@@ -416,8 +369,6 @@ class SMTOptimizer(Driver):
             for obj in self.get_objective_values().values():
                 f_new = obj
                 break
-
-            self._con_cache = self.get_constraint_values()
 
         except Exception as msg:
             self._exc_info = sys.exc_info()

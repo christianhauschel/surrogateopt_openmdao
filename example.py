@@ -1,6 +1,6 @@
 # %%
 
-from surrogateopt_openmdao import PySOTOptimizer, SMTOptimizer
+from surrogateopt_openmdao import PySOTDriver, SMTDriver
 import numpy as np 
 import proplot as pplt
 import openmdao.api as om
@@ -8,17 +8,17 @@ import openmdao.api as om
 # build the model
 prob = om.Problem()
 
-prob.model.add_subsystem("obj", om.ExecComp("f = x * sin(x)"))
+prob.model.add_subsystem("obj", om.ExecComp("f = x * sin(x * y) * y"))
 
 # setup the optimization
-prob.driver = SMTOptimizer()
-prob.driver.options["optimizer"] = "EI"
-prob.driver.options["optimizer"] = "SBO"
+prob.driver = SMTDriver()
+#prob.driver.options["optimizer"] = "EGO"
+prob.driver.options["criterion"] = "EI"
 prob.driver.options["maxiter"] = 10
-prob.driver.options["n_init"] = 5
+#prob.driver.options["n_init"] = 5
 
 prob.model.add_design_var("obj.x", lower=0, upper=10)
-# prob.model.add_design_var('obj.y', lower=-50, upper=50)
+prob.model.add_design_var('obj.y', lower=0, upper=10)
 prob.model.add_objective("obj.f")
 
 # Create a recorder
@@ -27,21 +27,14 @@ recorder = om.SqliteRecorder(fname_recorder)
 prob.add_recorder(recorder)
 prob.driver.add_recorder(recorder)
 
-
 prob.setup()
-
-# Set initial values.
-# prob.set_val('obj.x', 3.0)
-# prob.set_val('obj.y', -4.0)
-
-# run the optimization
 prob.run_driver()
 
-# %%
+# %% Print the results
 
-# print the results
 print("DVs")
 print(prob.get_val("obj.x"))
+print(prob.get_val("obj.y"))
 
 print("Objective")
 print(prob.get_val("obj.f"))
@@ -76,22 +69,12 @@ ax.format(
 ax[0].set(ylabel="obj") 
 pplt.show()
 
-# %%
 
+# %% Visualize the optimization history in iPython
 
-# fig, ax = pplt.subplots()
-# x = np.linspace(0, 10, 100)
-# ax.plot(x, x * np.sin(x))
-# ax.plot(prob.get_val("obj.x"), prob.get_val("obj.f"), "o")
-# ax.format(
-#     xlabel="x",
-#     ylabel="f(x)",
-#     title="Objective Function"
-# )
-# pplt.show()
-
-# %%
-
-#om.CaseViewer(fname_recorder)
+try:
+    om.CaseViewer(fname_recorder)
+except:
+    pass
 
 # %%
