@@ -3,14 +3,10 @@ from pySOT import *
 import numpy as np
 
 from openmdao.core.driver import Driver
-from collections import OrderedDict
 
 import sys
-from packaging.version import Version
 
 import numpy as np
-from scipy import __version__ as scipy_version
-from scipy.optimize import minimize
 
 from openmdao.core.constants import INF_BOUND
 from openmdao.core.driver import Driver, RecordingDebugging
@@ -19,9 +15,9 @@ from openmdao.utils.mpi import MPI
 
 from poap.controller import SerialController
 from pySOT.optimization_problems import OptimizationProblem
-from pySOT.experimental_design import SymmetricLatinHypercube, LatinHypercube
-from pySOT.strategy import SRBFStrategy
-from pySOT.surrogate import RBFInterpolant
+from pySOT.experimental_design import LatinHypercube
+from pySOT.strategy import SRBFStrategy, EIStrategy, LCBStrategy, DYCORSStrategy, SOPStrategy
+from pySOT.surrogate import RBFInterpolant, GPRegressor, MARSInterpolant, PolyRegressor
 
 
 CITATIONS = """
@@ -31,15 +27,7 @@ CITATIONS = """
 
 class PySOTDriver(Driver):
     """
-    Driver wrapper for the scipy.optimize.minimize family of local optimizers.
-
-    Inequality constraints are supported by COBYLA and SLSQP,
-    but equality constraints are only supported by SLSQP. None of the other
-    optimizers support constraints.
-
-    ScipyOptimizeDriver supports the following:
-        equality_constraints
-        inequality_constraints
+    Driver wrapper for pySOT surrogate optimizer.
 
     Parameters
     ----------
@@ -56,24 +44,6 @@ class PySOTDriver(Driver):
         Result returned from scipy.optimize call.
     opt_settings : dict
         Dictionary of solver-specific options. See the scipy.optimize.minimize documentation.
-    _check_jac : bool
-        Used internally to control when to perform singular checks on computed total derivs.
-    _con_cache : dict
-        Cached result of constraint evaluations because scipy asks for them in a separate function.
-    _con_idx : dict
-        Used for constraint bookkeeping in the presence of 2-sided constraints.
-    _grad_cache : {}
-        Cached result of nonlinear constraint derivatives because scipy asks for them in a separate
-        function.
-    _exc_info : 3 item tuple
-        Storage for exception and traceback information.
-    _obj_and_nlcons : list
-        List of objective + nonlinear constraints. Used to compute total derivatives
-        for all except linear constraints.
-    _dvlist : list
-        Copy of _designvars.
-    _lincongrad_cache : np.ndarray
-        Pre-calculated gradients of linear constraints.
     """
 
     def __init__(self, **kwargs):
@@ -119,14 +89,15 @@ class PySOTDriver(Driver):
         """
         Declare options before kwargs are processed in the init method.
         """
-        self.options.declare("optimizer", "RBF")
-        # self.options.declare('tol', 1.0e-6, lower=0.0,
-        #                      desc='Tolerance for termination. For detailed '
-        #                      'control, use solver-specific options.')
+        self.options.declare("optimizer", default="SRBF", desc="Optimiziation strategy: SRBF (default), EI, LCB, and DYCOR.")
+        self.options.declare("surrogate", default="RBF", desc="Surrogate models: RBF (default), GP, MARS, and Poly.")
         self.options.declare(
             "maxiter", 200, lower=0, desc="Maximum number of iterations."
         )
-        self.options.declare("n_init", None, lower=0, desc="Number of initial points.")
+        self.options.declare("n_init", default=None, lower=0, desc="Number of initial points.")
+        self.options.declare(
+            "kwargs_strategy", {}, types=dict, desc="Strategy options."
+        )
         self.options.declare(
             "kwargs_surrogate", {}, types=dict, desc="Surrogate options."
         )
@@ -221,7 +192,7 @@ class PySOTDriver(Driver):
             Failure flag; True if failed to converge, False is successful.
         """
         problem = self._problem()
-        opt = self.options["optimizer"]
+        opt = self.options
         model = problem.model
         self.iter_count = 0
         self._total_jac = None
@@ -238,7 +209,6 @@ class PySOTDriver(Driver):
         desvar_vals = self.get_design_var_values()
         self._dvlist = list(self._designvars)
 
-        # self.opt_settings['disp'] = self.options['disp']
 
         # Size Problem
         ndesvar = 0
@@ -293,46 +263,65 @@ class PySOTDriver(Driver):
 
         problem = Obj()
 
-        kwargs_surrogate = self.options["kwargs_surrogate"]
+        
 
         # Surrogate Model
-        surrogate = RBFInterpolant(
+        kwargs_surrogate = opt["kwargs_surrogate"]
+        if opt["surrogate"] == "RBF":
+            surrogate_fct = RBFInterpolant
+        elif opt["surrogate"] == "GP":
+            surrogate_fct = GPRegressor
+        elif opt["surrogate"] == "MARS":
+            surrogate_fct = MARSInterpolant
+        elif opt["surrogate"] == "Poly":
+            surrogate_fct = PolyRegressor
+        else:
+            raise ValueError("Surrogate model not recognized.")
+        surrogate = surrogate_fct(
             dim=problem.dim,
             lb=problem.lb,
             ub=problem.ub,
             **kwargs_surrogate,
-            # kernel=CubicKernel(),
-            # tail=LinearTail(problem.dim),
         )
 
         controller = SerialController(problem.eval, skip=False)
 
-        if self.options["n_init"] is None:
+        if opt["n_init"] is None:
             n_init = 2 * (problem.dim + 1)
         else:
-            n_init = self.options["n_init"]
+            n_init = opt["n_init"]
         sampling = LatinHypercube(dim=problem.dim, num_pts=n_init)
 
-        maxiter = self.options["maxiter"]
 
-        strategy = SRBFStrategy(
+        if opt["optimizer"] == "SRBF":
+            strategy_fct = SRBFStrategy
+        elif opt["optimizer"] == "EI":
+            strategy_fct = EIStrategy
+        elif opt["optimizer"] == "LCB":
+            strategy_fct = LCBStrategy
+        elif opt["optimizer"] == "DYCOR":
+            strategy_fct = DYCORSStrategy
+        elif opt["optimizer"] == "SOP":
+            strategy_fct = SOPStrategy
+        else:
+            raise ValueError("Strategy not recognized.")
+        strategy = strategy_fct(
             opt_prob=problem,
             exp_design=sampling,
             surrogate=surrogate,
             asynchronous=False,
-            max_evals=maxiter,
+            max_evals=opt["maxiter"],
             batch_size=1,
-            use_restarts=self.options["use_restarts"],
-            extra_points=self.options["extra_points"],
-            extra_vals=self.options["extra_vals"],
+            use_restarts=opt["use_restarts"],
+            extra_points=opt["extra_points"],
+            extra_vals=opt["extra_vals"],
+            **opt["kwargs_strategy"],
         )
-
         controller.strategy = strategy
 
         try:
             res = controller.run()
         except Exception as e:
-            # print warning
             print(f"Warning: PySOT error\n\t {e}")
             self.fail = True
             return self.fail
@@ -344,8 +333,6 @@ class PySOTDriver(Driver):
         y_opt = min(y)
 
         self.result = y_opt
-
-        # return self.fail
 
     def _objfunc(self, x_new):
         """

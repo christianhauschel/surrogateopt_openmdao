@@ -1,6 +1,6 @@
 # %%
 
-from surrogateopt_openmdao import SMTDriver, PySOTDriver
+from surrogateopt_openmdao import PySOTDriver
 import numpy as np 
 import proplot as pplt
 import openmdao.api as om
@@ -13,9 +13,11 @@ prob.model.add_subsystem("obj", om.ExecComp("f = x**2 + y**2"))
 
 # setup the optimization
 prob.driver = PySOTDriver()
-prob.driver.options["optimizer"] = "RBF"
+prob.driver.options["optimizer"] = "SRBF"
+prob.driver.options["surrogate"] = "RBF"
 prob.driver.options["maxiter"] = 100
 prob.driver.options["n_init"] = 5
+# prob.driver.options["debug_print"] = ["objs", "desvars"]
 
 prob.model.add_design_var("obj.x", lower=-1, upper=1)
 prob.model.add_design_var('obj.y', lower=-1, upper=1)

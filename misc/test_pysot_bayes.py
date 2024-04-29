@@ -6,8 +6,8 @@ import proplot as pplt
 from poap.controller import SerialController
 from pySOT.optimization_problems import OptimizationProblem
 from pySOT.experimental_design import SymmetricLatinHypercube
-from pySOT.strategy import SRBFStrategy
-from pySOT.surrogate import RBFInterpolant
+from pySOT.strategy import SRBFStrategy, EIStrategy
+from pySOT.surrogate import RBFInterpolant, GPRegressor
 
 max_evals = 100
 
@@ -32,14 +32,14 @@ class Obj(OptimizationProblem):
 
 obj = Obj()
 
-surrogate = RBFInterpolant(dim=obj.dim, lb=obj.lb, ub=obj.ub)
+surrogate = GPRegressor(dim=obj.dim, lb=obj.lb, ub=obj.ub)
 
 n_initial = 2 * (obj.dim + 1)
 sampling = SymmetricLatinHypercube(dim=obj.dim, num_pts=n_initial)
 
 # Create a strategy and a controller
 controller = SerialController(obj.eval)
-controller.strategy = SRBFStrategy(
+controller.strategy = EIStrategy(
     max_evals=max_evals,
     opt_prob=obj,
     exp_design=sampling,
