@@ -32,12 +32,12 @@ prob.run_driver()
 
 # %% Print the results
 
-print("DVs")
-print(prob.get_val("obj.x"))
-print(prob.get_val("obj.y"))
+# print("DVs")
+# print(prob.get_val("obj.x"))
+# print(prob.get_val("obj.y"))
 
-print("Objective")
-print(prob.get_val("obj.f"))
+# print("Objective")
+# print(prob.get_val("obj.f"))
 
 
 # %% Load the recorded data

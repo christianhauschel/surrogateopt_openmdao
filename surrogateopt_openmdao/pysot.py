@@ -123,15 +123,32 @@ class PySOTDriver(Driver):
         # self.options.declare('tol', 1.0e-6, lower=0.0,
         #                      desc='Tolerance for termination. For detailed '
         #                      'control, use solver-specific options.')
-        self.options.declare('maxiter', 200, lower=0,
-                             desc='Maximum number of iterations.')
-        self.options.declare('n_init', None, lower=0, desc='Number of initial points.')
-        self.options.declare("kwargs_surrogate", {}, types=dict, desc="Surrogate options")
-        self.options.declare("use_restarts", True, types=bool, desc="Use restarts")
-        # self.options.declare('disp', True, types=bool,
-        #                      desc='Set to False to prevent printing of Scipy convergence messages')
-
-
+        self.options.declare(
+            "maxiter", 200, lower=0, desc="Maximum number of iterations."
+        )
+        self.options.declare("n_init", None, lower=0, desc="Number of initial points.")
+        self.options.declare(
+            "kwargs_surrogate", {}, types=dict, desc="Surrogate options."
+        )
+        self.options.declare(
+            "use_restarts",
+            True,
+            types=bool,
+            desc="Allow strategy to restart if it gets stuck.",
+        )
+        self.options.declare(
+            "extra_points",
+            None,
+            types=np.ndarray,
+            desc="Extra points to add to the design.",
+        )
+        self.options.declare(
+            "extra_vals",
+            None,
+            types=np.ndarray,
+            desc="Extra values to add to the design.",
+        )
+  
     def _get_name(self):
         """
         Get name of current optimizer.
@@ -165,7 +182,6 @@ class PySOTDriver(Driver):
             False  # opt in _eq_constraint_optimizers
         )
         self.supports._read_only = True
-
 
     def get_driver_objective_calls(self):
         """
@@ -277,7 +293,6 @@ class PySOTDriver(Driver):
 
         problem = Obj()
 
-
         kwargs_surrogate = self.options["kwargs_surrogate"]
 
         # Surrogate Model
@@ -308,8 +323,8 @@ class PySOTDriver(Driver):
             max_evals=maxiter,
             batch_size=1,
             use_restarts=self.options["use_restarts"],
-            # extra_points=np.array([x0]) if config["optim"]["enable_x0"] else None,
-            # extra_vals=np.array([[y0]]) if config["optim"]["enable_x0"] else None,
+            extra_points=self.options["extra_points"],
+            extra_vals=self.options["extra_vals"],
         )
 
         controller.strategy = strategy
@@ -317,11 +332,11 @@ class PySOTDriver(Driver):
         try:
             res = controller.run()
         except Exception as e:
-            # print warning 
+            # print warning
             print(f"Warning: PySOT error\n\t {e}")
             self.fail = True
             return self.fail
-        
+
         x = [record.params for record in controller.fevals]
         x = np.array(x)
         y = [record.value for record in controller.fevals]
@@ -452,129 +467,3 @@ class PySOTDriver(Driver):
             return upper - cons[name][idx]
         else:
             return cons[name][idx] - lower
-
-    # def _gradfunc(self, x_new):
-    #     """
-    #     Evaluate and return the gradient for the objective.
-
-    #     Gradients for the constraints are also calculated and cached here.
-
-    #     Parameters
-    #     ----------
-    #     x_new : ndarray
-    #         Array containing input values at new design point.
-
-    #     Returns
-    #     -------
-    #     ndarray
-    #         Gradient of objective with respect to input array.
-    #     """
-    #     try:
-    #         grad = self._compute_totals(of=self._obj_and_nlcons, wrt=self._dvlist,
-    #                                     return_format=self._total_jac_format)
-    #         self._grad_cache = grad
-
-    #         # First time through, check for zero row/col.
-    #         if self._check_jac:
-    #             raise_error = self.options['singular_jac_behavior'] == 'error'
-    #             self._total_jac.check_total_jac(raise_error=raise_error,
-    #                                             tol=self.options['singular_jac_tol'])
-    #             self._check_jac = False
-
-    #     except Exception as msg:
-    #         self._exc_info = sys.exc_info()
-    #         return np.array([[]])
-
-    #     # print("Gradients calculated for objective")
-    #     # print('   xnew', x_new)
-    #     # print('   grad', grad[0, :])
-
-    #     return grad[0, :]
-
-    # def _congradfunc(self, x_new, name, dbl, idx):
-    #     """
-    #     Return the cached gradient of the constraint function.
-
-    #     Note, scipy calls the constraints one at a time, so the gradient is cached when the
-    #     objective gradient is called.
-
-    #     Parameters
-    #     ----------
-    #     x_new : ndarray
-    #         Array containing input values at new design point.
-    #     name : str
-    #         Name of the constraint to be evaluated.
-    #     dbl : bool
-    #         Denotes if a constraint is double-sided or not.
-    #     idx : float
-    #         Contains index into the constraint array.
-
-    #     Returns
-    #     -------
-    #     float
-    #         Gradient of the constraint function wrt all inputs.
-    #     """
-    #     if self._exc_info is not None:
-    #         self._reraise()
-
-    #     meta = self._cons[name]
-
-    #     if meta['linear']:
-    #         grad = self._lincongrad_cache
-    #     else:
-    #         grad = self._grad_cache
-    #     grad_idx = self._con_idx[name] + idx
-
-    #     # print("Constraint Gradient returned")
-    #     # print('   xnew', x_new)
-    #     # print('   grad', name, 'idx', idx, grad[grad_idx, :])
-
-    #     # Equality constraints
-    #     if meta['equals'] is not None:
-    #         return grad[grad_idx, :]
-
-    #     # Note, scipy defines constraints to be satisfied when positive,
-    #     # which is the opposite of OpenMDAO.
-    #     lower = meta['lower']
-    #     if isinstance(lower, np.ndarray):
-    #         lower = lower[idx]
-
-    #     if dbl or (lower <= -INF_BOUND):
-    #         return -grad[grad_idx, :]
-    #     else:
-    #         return grad[grad_idx, :]
-
-    # def _reraise(self):
-    #     """
-    #     Reraise any exception encountered when scipy calls back into our method.
-    #     """
-    #     raise self._exc_info[1].with_traceback(self._exc_info[2])
-
-
-# def signature_extender(fcn, extra_args):
-#     """
-#     Closure function, which appends extra arguments to the original function call.
-
-#     The first argument is the design vector. The possible extra arguments from the callback
-#     of :func:`scipy.optimize.minimize` are not passed to the function.
-
-#     Some algorithms take a sequence of :class:`~scipy.optimize.NonlinearConstraint` as input
-#     for the constraints. For this class it is not possible to pass additional arguments.
-#     With this function the signature will be correct for both scipy and the driver.
-
-#     Parameters
-#     ----------
-#     fcn : callable
-#         Function, which takes the design vector as the first argument.
-#     extra_args : tuple or list
-#         Extra arguments for the function.
-
-#     Returns
-#     -------
-#     callable
-#         The function with the signature expected by the driver.
-#     """
-#     def closure(x, *args):
-#         return fcn(x, *extra_args)
-
-#     return closure
