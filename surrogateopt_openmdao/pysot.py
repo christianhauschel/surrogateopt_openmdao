@@ -17,6 +17,12 @@ from openmdao.core.driver import Driver, RecordingDebugging
 from openmdao.utils.class_util import WeakMethodWrapper
 from openmdao.utils.mpi import MPI
 
+from poap.controller import SerialController
+from pySOT.optimization_problems import OptimizationProblem
+from pySOT.experimental_design import SymmetricLatinHypercube, LatinHypercube
+from pySOT.strategy import SRBFStrategy
+from pySOT.surrogate import RBFInterpolant
+
 
 CITATIONS = """
 ...
@@ -113,23 +119,18 @@ class PySOTDriver(Driver):
         """
         Declare options before kwargs are processed in the init method.
         """
-        self.options.declare("optimizer", "PySOT")
+        self.options.declare("optimizer", "RBF")
         # self.options.declare('tol', 1.0e-6, lower=0.0,
         #                      desc='Tolerance for termination. For detailed '
         #                      'control, use solver-specific options.')
-        # self.options.declare('maxiter', 200, lower=0,
-        #                      desc='Maximum number of iterations.')
+        self.options.declare('maxiter', 200, lower=0,
+                             desc='Maximum number of iterations.')
+        self.options.declare('n_init', None, lower=0, desc='Number of initial points.')
+        self.options.declare("kwargs_surrogate", {}, types=dict, desc="Surrogate options")
+        self.options.declare("use_restarts", True, types=bool, desc="Use restarts")
         # self.options.declare('disp', True, types=bool,
         #                      desc='Set to False to prevent printing of Scipy convergence messages')
-        # self.options.declare('singular_jac_behavior', default='warn',
-        #                      values=['error', 'warn', 'ignore'],
-        #                      desc='Defines behavior of a zero row/col check after first call to'
-        #                      'compute_totals:'
-        #                      'error - raise an error.'
-        #                      'warn - raise a warning.'
-        #                      "ignore - don't perform check.")
-        # self.options.declare('singular_jac_tol', default=1e-16,
-        #                      desc='Tolerance for zero row/column check.')
+
 
     def _get_name(self):
         """
@@ -164,24 +165,7 @@ class PySOTDriver(Driver):
             False  # opt in _eq_constraint_optimizers
         )
         self.supports._read_only = True
-        # self._check_jac = self.options['singular_jac_behavior'] in ['error', 'warn']
 
-        # # Raises error if multiple objectives are not supported, but more objectives were defined.
-        # if not self.supports['multiple_objectives'] and len(self._objs) > 1:
-        #     msg = '{} currently does not support multiple objectives.'
-        #     raise RuntimeError(msg.format(self.msginfo))
-
-        # # Since COBYLA does not support bounds, we need to add to the _cons metadata
-        # # for any bounds that need to be translated into a constraint
-        # if opt == 'COBYLA':
-        #     for name, meta in self._designvars.items():
-        #         lower = meta['lower']
-        #         upper = meta['upper']
-        #         if isinstance(lower, np.ndarray) or lower > -INF_BOUND \
-        #                 or isinstance(upper, np.ndarray) or upper < INF_BOUND:
-        #             self._cons[name] = meta.copy()
-        #             self._cons[name]['equals'] = None
-        #             self._cons[name]['linear'] = True
 
     def get_driver_objective_calls(self):
         """
@@ -238,9 +222,6 @@ class PySOTDriver(Driver):
         desvar_vals = self.get_design_var_values()
         self._dvlist = list(self._designvars)
 
-        # # maxiter and disp get passed into scipy with all the other options.
-        # if 'maxiter' not in self.opt_settings:  # lets you override the value in options
-        #     self.opt_settings['maxiter'] = self.options['maxiter']
         # self.opt_settings['disp'] = self.options['disp']
 
         # Size Problem
@@ -280,14 +261,6 @@ class PySOTDriver(Driver):
                 ub.append(p_high)
 
         # Set up the optimization problem
-        # TODO
-        from pySOT.experimental_design import SymmetricLatinHypercube
-        from pySOT.surrogate import CubicKernel, LinearTail, RBFInterpolant
-        from poap.controller import SerialController
-        from pySOT.controller import CheckpointController
-        from pySOT.strategy import SRBFStrategy, DYCORSStrategy, LCBStrategy
-        from pySOT.optimization_problems import OptimizationProblem
-
         obj = self._objfunc
 
         class Obj(OptimizationProblem):
@@ -304,44 +277,58 @@ class PySOTDriver(Driver):
 
         problem = Obj()
 
-        # print("-" * 40)
-        # print(problem.dim)
-        # print("-" * 40)
+
+        kwargs_surrogate = self.options["kwargs_surrogate"]
 
         # Surrogate Model
         surrogate = RBFInterpolant(
             dim=problem.dim,
             lb=problem.lb,
             ub=problem.ub,
+            **kwargs_surrogate,
             # kernel=CubicKernel(),
             # tail=LinearTail(problem.dim),
         )
 
         controller = SerialController(problem.eval, skip=False)
 
-        n_samples = 20  # TODO
-        slhd = SymmetricLatinHypercube(dim=problem.dim, num_pts=n_samples)
+        if self.options["n_init"] is None:
+            n_init = 2 * (problem.dim + 1)
+        else:
+            n_init = self.options["n_init"]
+        sampling = LatinHypercube(dim=problem.dim, num_pts=n_init)
 
+        maxiter = self.options["maxiter"]
 
-        strategy = DYCORSStrategy(
-            # max_evals=config["optim"]["max_evals"],
+        strategy = SRBFStrategy(
             opt_prob=problem,
-            exp_design=slhd,
+            exp_design=sampling,
             surrogate=surrogate,
             asynchronous=False,
-            max_evals=100,
+            max_evals=maxiter,
             batch_size=1,
-            # batch_size=config["optim"]["n_threads"],
-            use_restarts=False,
+            use_restarts=self.options["use_restarts"],
             # extra_points=np.array([x0]) if config["optim"]["enable_x0"] else None,
             # extra_vals=np.array([[y0]]) if config["optim"]["enable_x0"] else None,
         )
 
         controller.strategy = strategy
 
-        res = controller.run()
+        try:
+            res = controller.run()
+        except Exception as e:
+            # print warning 
+            print(f"Warning: PySOT error\n\t {e}")
+            self.fail = True
+            return self.fail
+        
+        x = [record.params for record in controller.fevals]
+        x = np.array(x)
+        y = [record.value for record in controller.fevals]
 
-        self.result = res.value
+        y_opt = min(y)
+
+        self.result = y_opt
 
         # return self.fail
 

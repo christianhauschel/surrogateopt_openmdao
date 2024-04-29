@@ -1,6 +1,6 @@
 # %%
 
-from surrogateopt_openmdao import PySOTDriver, SMTDriver
+from surrogateopt_openmdao import SMTDriver, PySOTDriver
 import numpy as np 
 import proplot as pplt
 import openmdao.api as om
@@ -12,13 +12,13 @@ prob.model.add_subsystem("obj", om.ExecComp("f = x * sin(x * y) * y"))
 
 # setup the optimization
 prob.driver = SMTDriver()
-#prob.driver.options["optimizer"] = "EGO"
-prob.driver.options["criterion"] = "EI"
-prob.driver.options["maxiter"] = 10
+prob.driver.options["optimizer"] = "EGO"
+# prob.driver.options["criterion"] = "EI"
+prob.driver.options["maxiter"] = 100
 #prob.driver.options["n_init"] = 5
 
-prob.model.add_design_var("obj.x", lower=0, upper=10)
-prob.model.add_design_var('obj.y', lower=0, upper=10)
+prob.model.add_design_var("obj.x", lower=-1, upper=1)
+prob.model.add_design_var('obj.y', lower=-1, upper=1)
 prob.model.add_objective("obj.f")
 
 # Create a recorder
@@ -72,9 +72,9 @@ pplt.show()
 
 # %% Visualize the optimization history in iPython
 
-try:
-    om.CaseViewer(fname_recorder)
-except:
-    pass
+# try:
+#     om.CaseViewer(fname_recorder)
+# except:
+#     pass
 
 # %%

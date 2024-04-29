@@ -1,6 +1,6 @@
 # surrogateopt_openmdao
 
-Surrogate optimization driver for OpenMDAO.
+Surrogate optimization (sequential model-based optimization) driver for OpenMDAO.
 
 ## ToDo
 

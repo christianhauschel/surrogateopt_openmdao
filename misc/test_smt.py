@@ -12,14 +12,15 @@ def function_test_1d(x):
     x = np.reshape(x, (-1,))
     y = np.zeros(x.shape)
     #y = (x - 3.5) * np.sin((x - 3.5) / (np.pi))
-    y = x * np.sin(x)
+    # y = x * np.sin(x)
+    y = x ** 2
     return y.reshape((-1, 1))
 
 
 # %%
 
-n_iter = 10
-xlimits = np.array([[0, 25.0]])
+n_iter = 7
+xlimits = np.array([[-1, 1]])
 
 n_x = 1
 n_doe = n_x * 2 + 1
@@ -44,7 +45,7 @@ ego = EGO(
 x_opt, y_opt, _, x_data, y_data = ego.optimize(fun=function_test_1d)
 print("Minimum in x={:.1f} with f(x)={:.1f}".format(float(x_opt), float(y_opt)))
 
-x_plot = np.atleast_2d(np.linspace(0, 25, 100)).T
+x_plot = np.atleast_2d(np.linspace(-1, 1, 100)).T
 y_plot = function_test_1d(x_plot)
 
 fig = plt.figure(figsize=[10, 10])
@@ -78,13 +79,13 @@ for i in range(n_iter):
         x_plot.T[0], sig_plus.T[0], sig_moins.T[0], alpha=0.3, color="g"
     )
     lines = [true_fun, data, gp, un_gp, opt, ei]
-    fig.suptitle("EGO optimization of $f(x) = x \sin{x}$")
+    fig.suptitle("EGO optimization of $f(x) = x^2$")
     fig.subplots_adjust(hspace=0.4, wspace=0.4, top=0.8)
     ax.set_title("iteration {}".format(i + 1))
     fig.legend(
         lines,
         [
-            "f(x)=xsin(x)",
+            "$f(x)=x^2$",
             "Given data points",
             "Kriging prediction",
             "Kriging 99% confidence interval",

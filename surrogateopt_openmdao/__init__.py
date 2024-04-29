@@ -1,2 +1,2 @@
-# from .pysot import PySOTDriver # TODO
+from .pysot import PySOTDriver # TODO
 from .smt import SMTDriver
