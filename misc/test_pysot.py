@@ -69,7 +69,7 @@ y = [record.value for record in controller.fevals]
 ids = np.arange(1, len(y) + 1)
 id_opt = np.argmin(y) + 1
 
-fig, ax = pplt.subplots(nrows=2, sharex=True, sharey=False, figsize=(5,5), tight_layout=True)
+fig, ax = pplt.subplots(nrows=2, sharex=True, sharey=False, figsize=(5,5))
 ax[0].plot(ids, y, ".")
 ax[0].set_xlabel("Evaluations")
 ax[0].set_ylabel("Objective")

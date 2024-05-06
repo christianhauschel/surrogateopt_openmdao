@@ -6,23 +6,27 @@ from openmdao.core.driver import Driver
 
 import sys
 
-import numpy as np
+from copy import copy, deepcopy
 
+import numpy as np
+import os
 from openmdao.core.constants import INF_BOUND
 from openmdao.core.driver import Driver, RecordingDebugging
-from openmdao.utils.class_util import WeakMethodWrapper
-from openmdao.utils.mpi import MPI
 
-from poap.controller import SerialController
+from poap.controller import SerialController, BasicWorkerThread, ThreadController
+from pySOT.controller import CheckpointController
 from pySOT.optimization_problems import OptimizationProblem
 from pySOT.experimental_design import LatinHypercube
-from pySOT.strategy import SRBFStrategy, EIStrategy, LCBStrategy, DYCORSStrategy, SOPStrategy
-from pySOT.surrogate import RBFInterpolant, GPRegressor, MARSInterpolant, PolyRegressor
+from pySOT.strategy import *
+from pySOT.surrogate import *
+from misc.test_pysot import f
 
+from pathlib import Path
+import yaml
 
-CITATIONS = """
-...
-"""
+from threading import Lock
+
+lock = Lock()
 
 
 class PySOTDriver(Driver):
@@ -83,23 +87,37 @@ class PySOTDriver(Driver):
         self._exc_info = None
         self._total_jac_format = "array"
 
-        self.cite = CITATIONS
-
     def _declare_options(self):
         """
         Declare options before kwargs are processed in the init method.
         """
-        self.options.declare("optimizer", default="SRBF", desc="Optimiziation strategy: SRBF (default), EI, LCB, and DYCOR.")
-        self.options.declare("surrogate", default="RBF", desc="Surrogate models: RBF (default), GP, MARS, and Poly.")
+        self.options.declare(
+            "optimizer",
+            default="SRBF",
+            desc="Optimiziation strategy: SRBF (default), EI, LCB, and DYCOR.",
+        )
+        self.options.declare(
+            "surrogate",
+            default="RBF",
+            desc="Surrogate models: RBF (default), GP, MARS, and Poly.",
+        )
         self.options.declare(
             "maxiter", 200, lower=0, desc="Maximum number of iterations."
         )
-        self.options.declare("n_init", default=None, lower=0, desc="Number of initial points.")
+        self.options.declare(
+            "n_init", default=None, lower=0, desc="Number of initial points."
+        )
         self.options.declare(
             "kwargs_strategy", {}, types=dict, desc="Strategy options."
         )
         self.options.declare(
             "kwargs_surrogate", {}, types=dict, desc="Surrogate options."
+        )
+        self.options.declare(
+            "asynchronous",
+            False,
+            types=bool,
+            desc="Asynchronous optimization (default: True).",
         )
         self.options.declare(
             "use_restarts",
@@ -119,7 +137,19 @@ class PySOTDriver(Driver):
             types=np.ndarray,
             desc="Extra values to add to the design.",
         )
-  
+        self.options.declare(
+            "checkpoint_file",
+            None,
+            types=str,
+            desc="Checkpoint file (makes it possible to restart a manually terminated optimization).",
+        )
+        self.options.declare(
+            "batch_size",
+            1,
+            types=int,
+            desc="Number of points to evaluate in parallel.",
+        )
+
     def _get_name(self):
         """
         Get name of current optimizer.
@@ -193,6 +223,11 @@ class PySOTDriver(Driver):
         """
         problem = self._problem()
         opt = self.options
+
+        # Raise error if batch_size > 1 or asynchronous is True
+        if opt["batch_size"] > 1 or opt["asynchronous"]:
+            raise ValueError("PySOTDriver does not support batch_size > 1 or asynchronous=True.")
+
         model = problem.model
         self.iter_count = 0
         self._total_jac = None
@@ -208,7 +243,6 @@ class PySOTDriver(Driver):
         self._con_cache = self.get_constraint_values()
         desvar_vals = self.get_design_var_values()
         self._dvlist = list(self._designvars)
-
 
         # Size Problem
         ndesvar = 0
@@ -263,8 +297,6 @@ class PySOTDriver(Driver):
 
         problem = Obj()
 
-        
-
         # Surrogate Model
         kwargs_surrogate = opt["kwargs_surrogate"]
         if opt["surrogate"] == "RBF":
@@ -284,55 +316,111 @@ class PySOTDriver(Driver):
             **kwargs_surrogate,
         )
 
-        controller = SerialController(problem.eval, skip=False)
+        if opt["batch_size"] > 1:
+            print("Running in parallel mode.")
 
-        if opt["n_init"] is None:
-            n_init = 2 * (problem.dim + 1)
+        controller = ThreadController()
+
+        restart = "n"
+        if opt["checkpoint_file"] is not None:
+            if os.path.exists(opt["checkpoint_file"]):
+                restart = input("Checkpoint file exists. Resume optimization? (y/n): ")
+                if restart == "y":
+                    None
+                else:
+                    os.remove(opt["checkpoint_file"])
+
+            # -------------------------
+            # Save meta data
+            # -------------------------
+
+            i = 0
+            dv_names = []
+            dv_shapes = []
+            for name, meta in self._designvars.items():
+                size = meta["size"]
+                i += size
+                dv_names.append(name)
+                dv_shapes.append(size)
+
+            dict_info = {
+                "dv": {
+                    "name": dv_names,
+                    "shape": dv_shapes,
+                }
+            }
+
+            dir_out = Path(opt["checkpoint_file"]).parent
+            fname_yaml = dir_out / "info.yaml"
+            with open(fname_yaml, "w") as f:
+                yaml.dump(dict_info, f)
+
+        if restart != "y":
+            print("Fresh optimization...")
+            n_init_min = 2 * (problem.dim + 1)
+            if opt["n_init"] is None:
+                n_init = n_init_min
+            else:
+                n_init = opt["n_init"]
+                if n_init < n_init_min:
+                    print(
+                        f"Warning: n_init is less than {n_init_min}. Setting n_init to {n_init_min}"
+                    )
+                    n_init = n_init_min
+            sampling = LatinHypercube(dim=problem.dim, num_pts=n_init)
+
+            if opt["optimizer"] == "SRBF":
+                strategy_fct = SRBFStrategy
+            elif opt["optimizer"] == "SRBF_Failsafe":
+                try:
+                    strategy_fct = SRBFFailsafeStrategy
+                except:
+                    print("Strategy `SRBF_Failsafe` not available.")
+                    return
+            elif opt["optimizer"] == "EI":
+                strategy_fct = EIStrategy
+            elif opt["optimizer"] == "LCB":
+                strategy_fct = LCBStrategy
+            elif opt["optimizer"] == "DYCOR":
+                strategy_fct = DYCORSStrategy
+            elif opt["optimizer"] == "SOP":
+                strategy_fct = SOPStrategy
+            else:
+                raise ValueError("Strategy not recognized.")
+            strategy = strategy_fct(
+                opt_prob=problem,
+                exp_design=sampling,
+                surrogate=surrogate,
+                asynchronous=opt["asynchronous"],
+                max_evals=opt["maxiter"],
+                use_restarts=opt["use_restarts"],
+                extra_points=opt["extra_points"],
+                extra_vals=opt["extra_vals"],
+                batch_size=opt["batch_size"],
+                **opt["kwargs_strategy"],
+            )
+            controller.strategy = strategy
+
+        for _ in range(opt["batch_size"]):
+            worker = BasicWorkerThread(controller, problem.eval)
+            controller.launch_worker(worker)
+
+        if opt["checkpoint_file"] is not None:
+            controller = CheckpointController(controller, opt["checkpoint_file"])
+
+        if restart != "y":
+            _ = controller.run()
         else:
-            n_init = opt["n_init"]
-        sampling = LatinHypercube(dim=problem.dim, num_pts=n_init)
+            _ = controller.resume()
 
-
-        if opt["optimizer"] == "SRBF":
-            strategy_fct = SRBFStrategy
-        elif opt["optimizer"] == "EI":
-            strategy_fct = EIStrategy
-        elif opt["optimizer"] == "LCB":
-            strategy_fct = LCBStrategy
-        elif opt["optimizer"] == "DYCOR":
-            strategy_fct = DYCORSStrategy
-        elif opt["optimizer"] == "SOP":
-            strategy_fct = SOPStrategy
-        else:
-            raise ValueError("Strategy not recognized.")
-        strategy = strategy_fct(
-            opt_prob=problem,
-            exp_design=sampling,
-            surrogate=surrogate,
-            asynchronous=False,
-            max_evals=opt["maxiter"],
-            batch_size=1,
-            use_restarts=opt["use_restarts"],
-            extra_points=opt["extra_points"],
-            extra_vals=opt["extra_vals"],
-            **opt["kwargs_strategy"],
-        )
-        controller.strategy = strategy
-
-        try:
-            res = controller.run()
-        except Exception as e:
-            print(f"Warning: PySOT error\n\t {e}")
-            self.fail = True
-            return self.fail
-
-        x = [record.params for record in controller.fevals]
+        x = [record.params for record in controller.controller.fevals]
         x = np.array(x)
-        y = [record.value for record in controller.fevals]
+        y = [record.value for record in controller.controller.fevals]
 
-        y_opt = min(y)
-
-        self.result = y_opt
+        # Run best design again, to register it in OpenMDAO's recorder as last value
+        # (this is not registered in the checkpoint file though)
+        # x_opt = x[np.argmin(y)]
+        # y_opt = obj(x_opt)
 
     def _objfunc(self, x_new):
         """
@@ -350,107 +438,30 @@ class PySOTDriver(Driver):
         float
             Value of the objective function evaluated at the new design point.
         """
+
         model = self._problem().model
 
         try:
 
-            # Pass in new inputs
+            # Set DVs
             i = 0
-
             for name, meta in self._designvars.items():
                 size = meta["size"]
                 self.set_design_var(name, x_new[i : i + size])
                 i += size
 
+            # Run Model
             with RecordingDebugging(self._get_name(), self.iter_count, self) as rec:
                 self.iter_count += 1
                 model.run_solve_nonlinear()
 
-            # Get the objective function evaluations
+            # Get Objective
             for obj in self.get_objective_values().values():
                 f_new = obj
                 break
-
-            self._con_cache = self.get_constraint_values()
 
         except Exception as msg:
             self._exc_info = sys.exc_info()
             return 0
 
         return f_new
-
-    def _con_val_func(self, x_new, name, dbl, idx):
-        """
-        Return the value of the constraint function requested in args.
-
-        The lower or upper bound is **not** subtracted from the value. Used for optimizers,
-        which take the bounds of the constraints (e.g. trust-constr)
-
-        Parameters
-        ----------
-        x_new : ndarray
-            Array containing input values at new design point.
-        name : str
-            Name of the constraint to be evaluated.
-        dbl : bool
-            True if double sided constraint.
-        idx : float
-            Contains index into the constraint array.
-
-        Returns
-        -------
-        float
-            Value of the constraint function.
-        """
-        return self._con_cache[name][idx]
-
-    def _confunc(self, x_new, name, dbl, idx):
-        """
-        Return the value of the constraint function requested in args.
-
-        Note that this function is called for each constraint, so the model is only run when the
-        objective is evaluated.
-
-        Parameters
-        ----------
-        x_new : ndarray
-            Array containing input values at new design point.
-        name : str
-            Name of the constraint to be evaluated.
-        dbl : bool
-            True if double sided constraint.
-        idx : float
-            Contains index into the constraint array.
-
-        Returns
-        -------
-        float
-            Value of the constraint function.
-        """
-        if self._exc_info is not None:
-            self._reraise()
-
-        cons = self._con_cache
-        meta = self._cons[name]
-
-        # Equality constraints
-        equals = meta["equals"]
-        if equals is not None:
-            if isinstance(equals, np.ndarray):
-                equals = equals[idx]
-            return cons[name][idx] - equals
-
-        # Note, scipy defines constraints to be satisfied when positive,
-        # which is the opposite of OpenMDAO.
-        upper = meta["upper"]
-        if isinstance(upper, np.ndarray):
-            upper = upper[idx]
-
-        lower = meta["lower"]
-        if isinstance(lower, np.ndarray):
-            lower = lower[idx]
-
-        if dbl or (lower <= -INF_BOUND):
-            return upper - cons[name][idx]
-        else:
-            return cons[name][idx] - lower

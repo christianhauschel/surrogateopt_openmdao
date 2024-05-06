@@ -5,6 +5,7 @@ import proplot as pplt
 import os
 from pathlib import Path
 from time import sleep
+from my_settings import run_command
 
 dir_out = Path("out/pysot")
 if not dir_out.exists():
@@ -25,6 +26,8 @@ class ObjComp(om.ExplicitComponent):
         x = inputs["x"]
         y = inputs["y"]
 
+        run_command("python misc/test.py")
+
         outputs["f"] = x[0]**2 + x[1]**2 + y**2
 
 prob.model.add_subsystem("obj", ObjComp())
@@ -35,10 +38,10 @@ prob.driver.options["optimizer"] = "SRBF_Failsafe"
 prob.driver.options["surrogate"] = "RBF"
 prob.driver.options["maxiter"] = 20
 prob.driver.options["n_init"] = 2
-prob.driver.options["batch_size"] = 100
+prob.driver.options["batch_size"] = 1
 prob.driver.options["asynchronous"] = False
 prob.driver.options["checkpoint_file"] = str(dir_out / "checkpoint.pysot")
-# prob.driver.options["debug_print"] = ["objs", "desvars"]
+prob.driver.options["debug_print"] = ["objs", "desvars"]
 
 prob.model.add_design_var("obj.x", lower=np.array([-1,-1]), upper=np.array([1,1]))
 prob.model.add_design_var('obj.y', lower=-1, upper=1)
