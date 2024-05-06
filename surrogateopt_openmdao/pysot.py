@@ -6,20 +6,17 @@ from openmdao.core.driver import Driver
 
 import sys
 
-from copy import copy, deepcopy
 
 import numpy as np
 import os
-from openmdao.core.constants import INF_BOUND
 from openmdao.core.driver import Driver, RecordingDebugging
 
-from poap.controller import SerialController, BasicWorkerThread, ThreadController
+from poap.controller import BasicWorkerThread, ThreadController
 from pySOT.controller import CheckpointController
 from pySOT.optimization_problems import OptimizationProblem
 from pySOT.experimental_design import LatinHypercube
 from pySOT.strategy import *
 from pySOT.surrogate import *
-from misc.test_pysot import f
 
 from pathlib import Path
 import yaml
