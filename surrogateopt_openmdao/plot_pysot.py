@@ -122,7 +122,7 @@ def plot_pysot(
         pplt.show()
 
     if fname_plot is not None:
-        pplt.savefig(fname_plot, dpi=dpi)
+        fig.savefig(fname_plot, dpi=dpi)
 
     return fig
 
