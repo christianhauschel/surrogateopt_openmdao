@@ -4,8 +4,11 @@ Surrogate optimization driver for OpenMDAO.
 
 Embeds SMT's and pySOT's optimization strategies.
 
+**Note:** Tested with OpenMDAO v3.26.
+
 ## Todo
 
+- [ ] Test with different OpenMDAO versions
 - [ ] Scipy's GP seems not to work with pySOT. Maybe pySOT should update something there.
 
 ## Installation

@@ -1,10 +1,7 @@
 # %%
 from surrogateopt_openmdao import PySOTDriver, plot_pysot
 import numpy as np 
-import proplot as pplt
-import os
 from pathlib import Path
-from time import sleep
 
 dir_out = Path("out/pysot")
 if not dir_out.exists():
@@ -33,9 +30,9 @@ prob.model.add_subsystem("obj", ObjComp())
 prob.driver = PySOTDriver()
 prob.driver.options["optimizer"] = "SRBF_Failsafe"
 prob.driver.options["surrogate"] = "RBF"
-prob.driver.options["maxiter"] = 20
+prob.driver.options["maxiter"] = 100
 prob.driver.options["n_init"] = 2
-prob.driver.options["batch_size"] = 100
+prob.driver.options["batch_size"] = 1
 prob.driver.options["asynchronous"] = False
 prob.driver.options["checkpoint_file"] = str(dir_out / "checkpoint.pysot")
 # prob.driver.options["debug_print"] = ["objs", "desvars"]
