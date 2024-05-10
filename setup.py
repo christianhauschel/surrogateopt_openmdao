@@ -9,7 +9,7 @@ setup(
     install_requires=[
         "openmdao", 
         "SMT", 
-        "pySOT @ git+https://github.com/christianhauschel/pySOT"
+        "pySOT @ git+https://github.com/christianhauschel/pySOT",
         "proplot",
         "matplotlib<3.5"
     ],
