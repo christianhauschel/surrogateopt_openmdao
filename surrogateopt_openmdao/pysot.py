@@ -11,7 +11,7 @@ import numpy as np
 import os
 from openmdao.core.driver import Driver, RecordingDebugging
 
-from poap.controller import BasicWorkerThread, ThreadController
+from poap.controller import BasicWorkerThread, ThreadController, SerialController
 from pySOT.controller import CheckpointController
 from pySOT.optimization_problems import OptimizationProblem
 from pySOT.experimental_design import LatinHypercube
@@ -314,9 +314,9 @@ class PySOTDriver(Driver):
         )
 
         if opt["batch_size"] > 1:
-            print("Running in parallel mode.")
-
-        controller = ThreadController()
+            controller = ThreadController()
+        else:
+            controller = SerialController(problem.eval)
 
         restart = "n"
         if opt["checkpoint_file"] is not None:
@@ -398,9 +398,11 @@ class PySOTDriver(Driver):
             )
             controller.strategy = strategy
 
-        for _ in range(opt["batch_size"]):
-            worker = BasicWorkerThread(controller, problem.eval)
-            controller.launch_worker(worker)
+        if opt["batch_size"] > 1:
+            for _ in range(opt["batch_size"]):
+                worker = BasicWorkerThread(controller, problem.eval)
+                controller.launch_worker(worker)
+
 
         if opt["checkpoint_file"] is not None:
             controller = CheckpointController(controller, opt["checkpoint_file"])
@@ -410,9 +412,9 @@ class PySOTDriver(Driver):
         else:
             _ = controller.resume()
 
-        x = [record.params for record in controller.controller.fevals]
-        x = np.array(x)
-        y = [record.value for record in controller.controller.fevals]
+        # x = [record.params for record in controller.fevals]
+        # x = np.array(x)
+        # y = [record.value for record in controller.fevals]
 
         # Run best design again, to register it in OpenMDAO's recorder as last value
         # (this is not registered in the checkpoint file though)

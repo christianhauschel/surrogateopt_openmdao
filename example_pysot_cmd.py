@@ -36,16 +36,22 @@ prob.model.add_subsystem("obj", ObjComp())
 prob.driver = PySOTDriver()
 prob.driver.options["optimizer"] = "SRBF_Failsafe"
 prob.driver.options["surrogate"] = "RBF"
-prob.driver.options["maxiter"] = 20
+prob.driver.options["maxiter"] = 3
 prob.driver.options["n_init"] = 2
-prob.driver.options["batch_size"] = 1
-prob.driver.options["asynchronous"] = False
-prob.driver.options["checkpoint_file"] = str(dir_out / "checkpoint.pysot")
+fname_checkpoint = None #str(dir_out / "checkpoint.pysot")
+prob.driver.options["checkpoint_file"] =  fname_checkpoint
 prob.driver.options["debug_print"] = ["objs", "desvars"]
 
 prob.model.add_design_var("obj.x", lower=np.array([-1,-1]), upper=np.array([1,1]))
 prob.model.add_design_var('obj.y', lower=-1, upper=1)
 prob.model.add_objective("obj.f")
+
+if fname_checkpoint is None:
+    # Create a recorder
+    fname_recorder = dir_out / "cases.sql"
+    recorder = om.SqliteRecorder(fname_recorder)
+    prob.add_recorder(recorder)
+    prob.driver.add_recorder(recorder)
 
 
 # %%
@@ -56,7 +62,7 @@ prob.run_driver()
 
 # %% Plot 
 
-plot_pysot(dir_out / "checkpoint.pysot", figsize=(6, 4), dpi=300, show=True)
+# plot_pysot(dir_out / "checkpoint.pysot", figsize=(6, 4), dpi=300, show=True)
 
 
 # %%
