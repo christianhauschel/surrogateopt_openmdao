@@ -71,7 +71,7 @@ def plot_pysot(
 
     x = strategy.X
     y = strategy.fX
-    n = strategy.num_evals
+    n = len(x)
     lb = strategy.surrogate.lb
     ub = strategy.surrogate.ub
 
@@ -80,6 +80,7 @@ def plot_pysot(
     i_min = np.argmin(y)
     id_min = ids[i_min]
     y_min = y[i_min]
+    
 
     if plot_dv_separate:
         n_rows, n_cols = calc_grid(x.shape[1] + 1)
@@ -106,8 +107,8 @@ def plot_pysot(
                 ylabel=f"{dv_names[i]}",
                 xlabel="Iterations",
             )
-            ax[i + 1].hlines(lb[i], 0, n, color="C2", linestyle="--", lw=1)
-            ax[i + 1].hlines(ub[i], 0, n, color="C2", linestyle="--", lw=1)
+            ax[i + 1].hlines(lb[i], 0, n-1, color="C2", linestyle="--", lw=1)
+            ax[i + 1].hlines(ub[i], 0, n-1, color="C2", linestyle="--", lw=1)
             ax[i + 1].plot(id_min, x[i_min, i], ".", c="C1")
     else:
         for i in range(x.shape[1]):

@@ -236,6 +236,11 @@ class PySOTDriver(Driver):
         with RecordingDebugging(self._get_name(), self.iter_count, self) as rec:
             model.run_solve_nonlinear()
             self.iter_count += 1
+            
+        # get initial objective and initial DVs
+        y0 = self.get_objective_values()
+        x0 = self.get_design_var_values()
+
 
         self._con_cache = self.get_constraint_values()
         desvar_vals = self.get_design_var_values()
@@ -384,6 +389,38 @@ class PySOTDriver(Driver):
                 strategy_fct = SOPStrategy
             else:
                 raise ValueError("Strategy not recognized.")
+            
+            if x0 is not None and y0 is not None:
+                
+                
+                # concat points from arrays in dict x0 into an array _x0 
+                _x0 = np.array([])
+                for name, meta in self._designvars.items():
+                    size = meta["size"]
+                    _x0 = np.hstack((_x0, x0[name]))
+                
+                # concat points from arrays in dict y0 into an array _y0
+                _y0 = np.array([])
+                for name, val in y0.items():
+                    _y0 = np.hstack((_y0, val))
+                    
+                
+                # insert extra points at beginning of opt["extra_points"] (n_pts x nx)
+                if opt["extra_points"] is not None:
+                    extra_points = opt["extra_points"]
+                    extra_vals = opt["extra_vals"]
+                else:
+                    extra_points = np.zeros((1, problem.dim))
+                    extra_vals = np.zeros((1, 1))
+                    
+                    extra_points[0,:] = _x0
+                    extra_vals[0,0] = _y0[0]
+                    
+                    
+            else:
+                extra_points = opt["extra_points"]
+                extra_vals = opt["extra_vals"]
+            
             strategy = strategy_fct(
                 opt_prob=problem,
                 exp_design=sampling,
@@ -391,8 +428,8 @@ class PySOTDriver(Driver):
                 asynchronous=opt["asynchronous"],
                 max_evals=opt["maxiter"],
                 use_restarts=opt["use_restarts"],
-                extra_points=opt["extra_points"],
-                extra_vals=opt["extra_vals"],
+                extra_points=extra_points,
+                extra_vals=extra_vals,
                 batch_size=opt["batch_size"],
                 **opt["kwargs_strategy"],
             )

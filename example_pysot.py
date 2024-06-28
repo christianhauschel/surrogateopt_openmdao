@@ -14,8 +14,8 @@ prob = om.Problem()
 
 class ObjComp(om.ExplicitComponent):
     def setup(self):
-        self.add_input("x", shape=(2,))
-        self.add_input("y")
+        self.add_input("y", val=0.0)
+        self.add_input("x", shape=(2,), val=np.zeros(2))
         self.add_output("f")
 
     def compute(self, inputs, outputs):
@@ -30,7 +30,7 @@ prob.model.add_subsystem("obj", ObjComp())
 prob.driver = PySOTDriver()
 prob.driver.options["optimizer"] = "SRBF_Failsafe"
 prob.driver.options["surrogate"] = "RBF"
-prob.driver.options["maxiter"] = 100
+prob.driver.options["maxiter"] = 30
 prob.driver.options["n_init"] = 2
 prob.driver.options["batch_size"] = 1
 prob.driver.options["asynchronous"] = False
