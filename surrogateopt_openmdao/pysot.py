@@ -99,7 +99,7 @@ class PySOTDriver(Driver):
             desc="Surrogate models: RBF (default), GP, MARS, and Poly.",
         )
         self.options.declare(
-            "maxiter", 200, lower=0, desc="Maximum number of iterations."
+            "maxiter", 200, lower=0, desc="Maximum number of iterations (after the initial phase)."
         )
         self.options.declare(
             "n_init", default=None, lower=0, desc="Number of initial points."
@@ -115,6 +115,12 @@ class PySOTDriver(Driver):
             False,
             types=bool,
             desc="Asynchronous optimization (default: True).",
+        )
+        self.options.declare(
+            "run_initial_design",
+            True,
+            types=bool,
+            desc="Run initial design before optimization.",
         )
         self.options.declare(
             "use_restarts",
@@ -231,15 +237,54 @@ class PySOTDriver(Driver):
 
         self._check_for_missing_objective()
         self._check_for_invalid_desvar_values()
+        
+        resume = "n"
+        if opt["checkpoint_file"] is not None:
+            if os.path.exists(opt["checkpoint_file"]):
+                resume = input("Checkpoint file exists. Resume optimization? (y/n): ")
+                if resume == "y":
+                    None
+                else:
+                    os.remove(opt["checkpoint_file"])
+
+            # -------------------------
+            # Save meta data
+            # -------------------------
+
+            i = 0
+            dv_names = []
+            dv_shapes = []
+            for name, meta in self._designvars.items():
+                size = meta["size"]
+                i += size
+                dv_names.append(name)
+                dv_shapes.append(size)
+
+            dict_info = {
+                "dv": {
+                    "name": dv_names,
+                    "shape": dv_shapes,
+                }
+            }
+
+            dir_out = Path(opt["checkpoint_file"]).parent
+            fname_yaml = dir_out / "info.yaml"
+            with open(fname_yaml, "w") as f:
+                yaml.dump(dict_info, f)
 
         # Initial Run
-        with RecordingDebugging(self._get_name(), self.iter_count, self) as rec:
-            model.run_solve_nonlinear()
-            self.iter_count += 1
-            
-        # get initial objective and initial DVs
-        y0 = self.get_objective_values()
-        x0 = self.get_design_var_values()
+        if resume == "n" and opt["run_initial_design"]:
+            print("Running initial design...")
+            with RecordingDebugging(self._get_name(), self.iter_count, self) as rec:
+                model.run_solve_nonlinear()
+                self.iter_count += 1
+                
+            # get initial objective and initial DVs
+            y0 = self.get_objective_values()
+            x0 = self.get_design_var_values()
+        else:
+            x0 = None 
+            y0 = None
 
 
         self._con_cache = self.get_constraint_values()
@@ -323,41 +368,9 @@ class PySOTDriver(Driver):
         else:
             controller = SerialController(problem.eval)
 
-        restart = "n"
-        if opt["checkpoint_file"] is not None:
-            if os.path.exists(opt["checkpoint_file"]):
-                restart = input("Checkpoint file exists. Resume optimization? (y/n): ")
-                if restart == "y":
-                    None
-                else:
-                    os.remove(opt["checkpoint_file"])
+        
 
-            # -------------------------
-            # Save meta data
-            # -------------------------
-
-            i = 0
-            dv_names = []
-            dv_shapes = []
-            for name, meta in self._designvars.items():
-                size = meta["size"]
-                i += size
-                dv_names.append(name)
-                dv_shapes.append(size)
-
-            dict_info = {
-                "dv": {
-                    "name": dv_names,
-                    "shape": dv_shapes,
-                }
-            }
-
-            dir_out = Path(opt["checkpoint_file"]).parent
-            fname_yaml = dir_out / "info.yaml"
-            with open(fname_yaml, "w") as f:
-                yaml.dump(dict_info, f)
-
-        if restart != "y":
+        if resume != "y":
             print("Fresh optimization...")
             n_init_min = 2 * (problem.dim + 1)
             if opt["n_init"] is None:
@@ -391,8 +404,6 @@ class PySOTDriver(Driver):
                 raise ValueError("Strategy not recognized.")
             
             if x0 is not None and y0 is not None:
-                
-                
                 # concat points from arrays in dict x0 into an array _x0 
                 _x0 = np.array([])
                 for name, meta in self._designvars.items():
@@ -444,7 +455,7 @@ class PySOTDriver(Driver):
         if opt["checkpoint_file"] is not None:
             controller = CheckpointController(controller, opt["checkpoint_file"])
 
-        if restart != "y":
+        if resume != "y":
             _ = controller.run()
         else:
             _ = controller.resume()

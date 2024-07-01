@@ -30,8 +30,9 @@ prob.model.add_subsystem("obj", ObjComp())
 prob.driver = PySOTDriver()
 prob.driver.options["optimizer"] = "SRBF_Failsafe"
 prob.driver.options["surrogate"] = "RBF"
-prob.driver.options["maxiter"] = 30
-prob.driver.options["n_init"] = 2
+prob.driver.options["maxiter"] = 10
+prob.driver.options["n_init"] = 4
+prob.driver.options["run_initial_design"] = True
 prob.driver.options["batch_size"] = 1
 prob.driver.options["asynchronous"] = False
 prob.driver.options["checkpoint_file"] = str(dir_out / "checkpoint.pysot")
