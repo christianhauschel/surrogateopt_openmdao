@@ -111,6 +111,7 @@ def plot_pysot(
             ax[i + 1].hlines(lb[i], 0, n-1, color="C2", linestyle="--", lw=1)
             ax[i + 1].hlines(ub[i], 0, n-1, color="C2", linestyle="--", lw=1)
             ax[i + 1].plot(id_min, x[i_min, i], ".", c="C1")
+            ax[i + 1].plot(0, x[0, i], "x", c="k")
             
     else:
         for i in range(x.shape[1]):
