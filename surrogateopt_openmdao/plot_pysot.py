@@ -90,6 +90,7 @@ def plot_pysot(
     fig, ax = pplt.subplots(ncols=n_cols, nrows=n_rows, figsize=figsize, sharey=False)
     ax[0].plot(ids, y)
     ax[0].plot(id_min, y_min, ".", c="C1", label="Minimum")
+    ax[0].plot(0, y[0], "x", c="k", label="Initial")
     ax[0].legend()
     ax[0].set(
         ylabel="Objective",
@@ -110,6 +111,7 @@ def plot_pysot(
             ax[i + 1].hlines(lb[i], 0, n-1, color="C2", linestyle="--", lw=1)
             ax[i + 1].hlines(ub[i], 0, n-1, color="C2", linestyle="--", lw=1)
             ax[i + 1].plot(id_min, x[i_min, i], ".", c="C1")
+            
     else:
         for i in range(x.shape[1]):
             ax[1].plot(ids, x[:, i], label=dv_names[i])
