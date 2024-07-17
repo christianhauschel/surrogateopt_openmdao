@@ -91,7 +91,7 @@ def plot_pysot(
     ax[0].plot(ids, y)
     ax[0].plot(id_min, y_min, ".", c="C1", label="Minimum")
     ax[0].plot(0, y[0], "x", c="k", label="Initial")
-    ax[0].legend()
+    ax[0].legend(ncols=1)
     ax[0].set(
         ylabel="Objective",
         xlabel="Iterations",
@@ -120,7 +120,7 @@ def plot_pysot(
             ylabel="DV",
             xlabel="Iterations",
         )
-        ax[1].legend()
+        ax[1].legend(ncols=1)
 
     if show:
         pplt.show()
